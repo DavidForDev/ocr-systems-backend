@@ -1,19 +1,15 @@
-FROM python:3.11-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    gcc \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:20-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-COPY . .
+COPY tsconfig.json ./
+COPY src ./src
+
+RUN npx tsc
 
 EXPOSE 8000
 
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["node", "dist/index.js"]
