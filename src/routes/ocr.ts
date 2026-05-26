@@ -18,7 +18,7 @@ async function prepareImage(buffer: Buffer): Promise<Buffer> {
 
 router.get("/engines", (_req: Request, res: Response) => {
   const list = getAllEngines().map((e) => e.info());
-  res.json(list);
+  res.json({ engines: list, count: list.length });
 });
 
 router.post("/ocr", upload.single("file"), async (req: Request, res: Response) => {
@@ -111,16 +111,22 @@ router.post("/ocr/compare", upload.single("file"), async (req: Request, res: Res
 
 router.get("/results", async (_req: Request, res: Response) => {
   try {
+    const limit = parseInt((_req.query.limit as string) || "50", 10);
+    const skip = parseInt((_req.query.skip as string) || "0", 10);
+
     const db = getDB();
     if (!db) {
-      res.json([]);
+      res.json({ runs: [], total: 0, limit, skip });
       return;
     }
+
+    const total = await db.collection("runs").countDocuments();
     const runs = await db
       .collection("runs")
       .find({})
       .sort({ created_at: -1 })
-      .limit(100)
+      .skip(skip)
+      .limit(limit)
       .toArray();
 
     const mapped = runs.map((r) => ({
@@ -132,7 +138,7 @@ router.get("/results", async (_req: Request, res: Response) => {
       created_at: r.created_at,
     }));
 
-    res.json(mapped);
+    res.json({ runs: mapped, total, limit, skip });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
