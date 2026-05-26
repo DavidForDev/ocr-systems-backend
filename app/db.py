@@ -9,10 +9,19 @@ db = None
 
 async def connect_db():
     global client, db
-    uri = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
-    client = AsyncIOMotorClient(uri)
-    db = client.ocr_systems
-    print(f"[MongoDB] Connected to {uri}")
+    uri = os.environ.get("MONGODB_URI")
+    if not uri:
+        print("[MongoDB] MONGODB_URI not set — running without database")
+        return
+    try:
+        client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
+        await client.server_info()
+        db = client.ocr_systems
+        print(f"[MongoDB] Connected")
+    except Exception as e:
+        print(f"[MongoDB] Connection failed: {e} — running without database")
+        client = None
+        db = None
 
 
 async def close_db():
@@ -35,12 +44,17 @@ async def save_run(
         "results": results,
         "created_at": datetime.now(timezone.utc),
     }
-    inserted = await db.runs.insert_one(doc)
-    doc["_id"] = str(inserted.inserted_id)
+    if db is not None:
+        inserted = await db.runs.insert_one(doc)
+        doc["_id"] = str(inserted.inserted_id)
+    else:
+        doc["_id"] = "no-db"
     return doc
 
 
 async def get_runs(limit: int = 50, skip: int = 0) -> list[dict]:
+    if db is None:
+        return []
     cursor = db.runs.find().sort("created_at", -1).skip(skip).limit(limit)
     runs = await cursor.to_list(length=limit)
     for run in runs:
@@ -49,6 +63,8 @@ async def get_runs(limit: int = 50, skip: int = 0) -> list[dict]:
 
 
 async def get_run(run_id: str) -> dict | None:
+    if db is None:
+        return None
     from bson import ObjectId
 
     try:
@@ -61,6 +77,8 @@ async def get_run(run_id: str) -> dict | None:
 
 
 async def delete_run(run_id: str) -> bool:
+    if db is None:
+        return False
     from bson import ObjectId
 
     try:
@@ -71,4 +89,6 @@ async def delete_run(run_id: str) -> bool:
 
 
 async def get_run_count() -> int:
+    if db is None:
+        return 0
     return await db.runs.count_documents({})
