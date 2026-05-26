@@ -1,0 +1,28 @@
+fastapi
+uvicorn[standard]
+python-multipart
+Pillow
+aiofiles
+requests
+python-dotenv
+motor                       # MongoDB async driver
+pymongo
+
+# Local OCR Engines
+pytesseract
+easyocr
+paddleocr
+paddlepaddle
+surya-ocr
+python-doctr[torch]
+transformers
+kraken
+torch
+torchvision
+
+# Cloud OCR Engines
+boto3                       # AWS Textract
+google-cloud-documentai     # Google Document AI
+azure-ai-formrecognizer     # Azure Document Intelligence
+mistralai                   # Mistral OCR + Pixtral Vision
+google-generativeai         # Gemini models
