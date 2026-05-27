@@ -5,15 +5,13 @@ import { OCREngine, OCRResult } from "./base.js";
 const PRICING = { perPage: 1.5 / 1000 };
 
 /**
- * Resolve a Google service-account credential from any of the supported env
- * vars. Accepts either inline JSON or a path to a JSON key file. The same
- * service account used for Vertex AI works here, provided it has Document AI
- * access (roles/documentai.apiUser). Returns undefined to fall back to ADC.
+ * Optional inline credentials via GOOGLE_APPLICATION_CREDENTIALS_JSON (handy on
+ * platforms where you can't ship a key file). Accepts inline JSON or a path.
+ * When unset, the client uses Application Default Credentials — i.e. the file
+ * pointed to by GOOGLE_APPLICATION_CREDENTIALS. Returns undefined for ADC.
  */
-function loadGoogleCredentials(): Record<string, unknown> | undefined {
-  const raw =
-    process.env.GOOGLE_VERTEX_CREDENTIALS ||
-    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+function loadInlineCredentials(): Record<string, unknown> | undefined {
+  const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
   if (!raw || !raw.trim()) return undefined;
 
   const value = raw.trim();
@@ -33,31 +31,36 @@ class GoogleDocumentAIEngine extends OCREngine {
   private _processorName!: string;
 
   protected async _lazyInit() {
-    const credentials = loadGoogleCredentials();
-    const location = process.env.GOOGLE_LOCATION || "us";
-    // Project can come from an explicit env var or straight from the
-    // service-account JSON (its `project_id` field) — so GOOGLE_VERTEX_CREDENTIALS
-    // alone is enough.
-    const projectId =
-      process.env.GOOGLE_PROJECT_ID ||
-      (credentials?.project_id as string | undefined);
-
-    if (!projectId) {
-      throw new Error(
-        "No Google project found. Set GOOGLE_VERTEX_CREDENTIALS to your " +
-          "service-account JSON (it carries project_id), or set GOOGLE_PROJECT_ID."
-      );
-    }
+    const inlineCreds = loadInlineCredentials();
+    const location =
+      process.env.GOOGLE_DOCUMENTAI_LOCATION || process.env.GOOGLE_LOCATION || "us";
 
     this._client = new DocumentProcessorServiceClient({
-      ...(credentials ? { credentials } : {}),
+      // When no inline creds are given, the client authenticates via ADC
+      // (GOOGLE_APPLICATION_CREDENTIALS).
+      ...(inlineCreds ? { credentials: inlineCreds } : {}),
       // Document AI requires a region-specific endpoint.
       apiEndpoint: `${location}-documentai.googleapis.com`,
     });
 
+    // Project: explicit env var, else inline creds, else resolved from ADC.
+    let projectId =
+      process.env.GOOGLE_DOCUMENTAI_PROJECT_ID ||
+      process.env.GOOGLE_PROJECT_ID ||
+      (inlineCreds?.project_id as string | undefined);
+    if (!projectId) projectId = await this._client.getProjectId();
+
+    if (!projectId) {
+      throw new Error(
+        "No Google project found. Set GOOGLE_DOCUMENTAI_PROJECT_ID, or point " +
+          "GOOGLE_APPLICATION_CREDENTIALS at a service-account key file."
+      );
+    }
+
     // Use an explicit processor if given; otherwise discover or create an OCR
-    // processor in the project so credentials alone are sufficient.
-    const explicit = process.env.GOOGLE_PROCESSOR_ID;
+    // processor in the project.
+    const explicit =
+      process.env.GOOGLE_DOCUMENTAI_PROCESSOR_ID || process.env.GOOGLE_PROCESSOR_ID;
     this._processorName = explicit
       ? `projects/${projectId}/locations/${location}/processors/${explicit}`
       : await this._resolveOcrProcessor(projectId, location);
