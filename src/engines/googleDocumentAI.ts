@@ -1,8 +1,31 @@
 import fs from "node:fs";
+import sharp from "sharp";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { OCREngine, OCRResult } from "./base.js";
 
 const PRICING = { perPage: 1.5 / 1000 };
+
+/**
+ * Pull the human-readable field violations out of a gRPC error so a bare
+ * "INVALID_ARGUMENT" tells us *what* was actually wrong.
+ */
+function describeGrpcError(e: any): string {
+  const base = e?.message || "Unknown error";
+  const details = e?.statusDetails;
+  if (!Array.isArray(details) || !details.length) return base;
+
+  const parts: string[] = [];
+  for (const d of details) {
+    if (Array.isArray(d?.fieldViolations)) {
+      for (const v of d.fieldViolations) parts.push(`${v.field}: ${v.description}`);
+    } else if (d?.reason) {
+      parts.push(d.reason);
+    } else if (d?.description) {
+      parts.push(d.description);
+    }
+  }
+  return parts.length ? `${base} — ${parts.join("; ")}` : base;
+}
 
 /**
  * Resolve service-account credentials for the client.
@@ -113,11 +136,19 @@ class GoogleDocumentAIEngine extends OCREngine {
   protected async _recognize(imageBuffer: Buffer): Promise<OCRResult> {
     const start = performance.now();
     try {
+      // Re-encode to a modest JPEG. Document AI online processing is strict
+      // about request size; a downscaled JPEG keeps us well within limits and
+      // is a fully supported input format.
+      const content = await sharp(imageBuffer)
+        .resize(3000, 3000, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 90 })
+        .toBuffer();
+
       const [result] = await this._client.processDocument({
         name: this._processorName,
         rawDocument: {
-          content: imageBuffer.toString("base64"),
-          mimeType: "image/png",
+          content, // raw bytes — let the client handle encoding
+          mimeType: "image/jpeg",
         },
       });
 
@@ -146,7 +177,7 @@ class GoogleDocumentAIEngine extends OCREngine {
         processing_time: +((performance.now() - start) / 1000).toFixed(3),
         engine_id: this.id,
         engine_name: this.name,
-        error: e.message,
+        error: describeGrpcError(e),
         metadata: {},
       };
     }
