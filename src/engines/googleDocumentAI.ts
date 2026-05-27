@@ -106,8 +106,34 @@ class GoogleDocumentAIEngine extends OCREngine {
     const explicit =
       env("GOOGLE_DOCUMENTAI_PROCESSOR_ID") || env("GOOGLE_PROCESSOR_ID");
     this._processorName = explicit
-      ? `projects/${projectId}/locations/${location}/processors/${explicit}`
+      ? await this._ensureOcr(
+          `projects/${projectId}/locations/${location}/processors/${explicit}`,
+          projectId,
+          location
+        )
       : await this._resolveOcrProcessor(projectId, location);
+  }
+
+  /**
+   * Confirm the configured processor is a Document OCR processor. A Custom
+   * Extractor / Form processor rejects OCR requests with "entity_types: Must
+   * have at least one entity type". If it's the wrong type, fall back to a real
+   * OCR processor. If we can't verify (e.g. no get permission), use it as-is.
+   */
+  private async _ensureOcr(name: string, projectId: string, location: string): Promise<string> {
+    try {
+      const [proc] = await this._client.getProcessor({ name });
+      if (proc?.type && proc.type !== OCR_PROCESSOR_TYPE) {
+        console.warn(
+          `Document AI processor is type ${proc.type}, not ${OCR_PROCESSOR_TYPE}; ` +
+            `resolving an OCR processor instead.`
+        );
+        return this._resolveOcrProcessor(projectId, location);
+      }
+      return name;
+    } catch {
+      return name;
+    }
   }
 
   /** Find an existing OCR processor in the project, or create one. */
