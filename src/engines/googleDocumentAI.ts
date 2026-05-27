@@ -12,14 +12,16 @@ const PRICING = { perPage: 1.5 / 1000 };
  */
 function loadGoogleCredentials(): Record<string, unknown> | undefined {
   const raw =
-    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
-    process.env.GOOGLE_VERTEX_CREDENTIALS;
+    process.env.GOOGLE_VERTEX_CREDENTIALS ||
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
   if (!raw || !raw.trim()) return undefined;
 
   const value = raw.trim();
   const json = value.startsWith("{") ? value : fs.readFileSync(value, "utf8");
   return JSON.parse(json);
 }
+
+const OCR_PROCESSOR_TYPE = "OCR_PROCESSOR";
 
 class GoogleDocumentAIEngine extends OCREngine {
   id = "google-document-ai";
@@ -31,21 +33,57 @@ class GoogleDocumentAIEngine extends OCREngine {
   private _processorName!: string;
 
   protected async _lazyInit() {
-    const projectId = process.env.GOOGLE_PROJECT_ID;
+    const credentials = loadGoogleCredentials();
     const location = process.env.GOOGLE_LOCATION || "us";
-    const processorId = process.env.GOOGLE_PROCESSOR_ID;
+    // Project can come from an explicit env var or straight from the
+    // service-account JSON (its `project_id` field) — so GOOGLE_VERTEX_CREDENTIALS
+    // alone is enough.
+    const projectId =
+      process.env.GOOGLE_PROJECT_ID ||
+      (credentials?.project_id as string | undefined);
 
-    if (!projectId || !processorId) {
-      throw new Error("GOOGLE_PROJECT_ID and GOOGLE_PROCESSOR_ID environment variables are required");
+    if (!projectId) {
+      throw new Error(
+        "No Google project found. Set GOOGLE_VERTEX_CREDENTIALS to your " +
+          "service-account JSON (it carries project_id), or set GOOGLE_PROJECT_ID."
+      );
     }
 
-    const credentials = loadGoogleCredentials();
+    this._client = new DocumentProcessorServiceClient({
+      ...(credentials ? { credentials } : {}),
+      // Document AI requires a region-specific endpoint.
+      apiEndpoint: `${location}-documentai.googleapis.com`,
+    });
 
-    this._client = credentials
-      ? new DocumentProcessorServiceClient({ credentials })
-      : new DocumentProcessorServiceClient();
+    // Use an explicit processor if given; otherwise discover or create an OCR
+    // processor in the project so credentials alone are sufficient.
+    const explicit = process.env.GOOGLE_PROCESSOR_ID;
+    this._processorName = explicit
+      ? `projects/${projectId}/locations/${location}/processors/${explicit}`
+      : await this._resolveOcrProcessor(projectId, location);
+  }
 
-    this._processorName = `projects/${projectId}/locations/${location}/processors/${processorId}`;
+  /** Find an existing OCR processor in the project, or create one. */
+  private async _resolveOcrProcessor(projectId: string, location: string): Promise<string> {
+    const parent = `projects/${projectId}/locations/${location}`;
+    try {
+      const [processors] = await this._client.listProcessors({ parent });
+      const ocr = processors.find((p) => p.type === OCR_PROCESSOR_TYPE && p.name);
+      if (ocr?.name) return ocr.name;
+
+      const [created] = await this._client.createProcessor({
+        parent,
+        processor: { type: OCR_PROCESSOR_TYPE, displayName: "ocr-studio-auto" },
+      });
+      if (!created?.name) throw new Error("processor created without a name");
+      return created.name;
+    } catch (e: any) {
+      throw new Error(
+        `Could not resolve a Document AI OCR processor in ${parent} ` +
+          `(${e.message}). Either grant the service account roles/documentai.editor ` +
+          `so it can list/create processors, or set GOOGLE_PROCESSOR_ID explicitly.`
+      );
+    }
   }
 
   protected async _recognize(imageBuffer: Buffer): Promise<OCRResult> {
