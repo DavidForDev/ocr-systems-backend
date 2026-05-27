@@ -197,13 +197,24 @@ class GoogleDocumentAIEngine extends OCREngine {
         },
       };
     } catch (e: any) {
+      let message = describeGrpcError(e);
+      // The hallmark of pointing at a Custom Extractor/Form processor instead
+      // of a Document OCR processor — give an actionable message.
+      if (/entity[_ ]?type/i.test(message)) {
+        message =
+          "GOOGLE_DOCUMENTAI_PROCESSOR_ID points to a non-OCR processor (a Custom " +
+          "Extractor/Form processor). Create a 'Document OCR' processor in the " +
+          "Document AI console and set GOOGLE_DOCUMENTAI_PROCESSOR_ID to its id — or " +
+          "remove that variable and grant the service account roles/documentai.editor " +
+          "so an OCR processor can be created automatically.";
+      }
       return {
         text: "",
         confidence: null,
         processing_time: +((performance.now() - start) / 1000).toFixed(3),
         engine_id: this.id,
         engine_name: this.name,
-        error: describeGrpcError(e),
+        error: message,
         metadata: {},
       };
     }
