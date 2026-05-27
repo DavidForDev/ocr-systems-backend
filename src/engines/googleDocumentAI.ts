@@ -5,18 +5,33 @@ import { OCREngine, OCRResult } from "./base.js";
 const PRICING = { perPage: 1.5 / 1000 };
 
 /**
- * Optional inline credentials via GOOGLE_APPLICATION_CREDENTIALS_JSON (handy on
- * platforms where you can't ship a key file). Accepts inline JSON or a path.
- * When unset, the client uses Application Default Credentials — i.e. the file
- * pointed to by GOOGLE_APPLICATION_CREDENTIALS. Returns undefined for ADC.
+ * Resolve service-account credentials for the client.
+ *
+ * Accepts inline JSON from GOOGLE_APPLICATION_CREDENTIALS_JSON, or — defensively
+ * — inline JSON accidentally pasted into GOOGLE_APPLICATION_CREDENTIALS (which
+ * ADC would otherwise try to stat as a file path, failing with ENAMETOOLONG).
+ * A real file PATH in GOOGLE_APPLICATION_CREDENTIALS is left for ADC to load.
+ * Returns undefined to fall back to ADC.
  */
 function loadInlineCredentials(): Record<string, unknown> | undefined {
-  const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  if (!raw || !raw.trim()) return undefined;
+  for (const key of ["GOOGLE_APPLICATION_CREDENTIALS_JSON", "GOOGLE_APPLICATION_CREDENTIALS"]) {
+    const raw = process.env[key];
+    if (!raw || !raw.trim()) continue;
+    const value = raw.trim();
 
-  const value = raw.trim();
-  const json = value.startsWith("{") ? value : fs.readFileSync(value, "utf8");
-  return JSON.parse(json);
+    if (value.startsWith("{")) {
+      // Inline JSON. If it was in GOOGLE_APPLICATION_CREDENTIALS, clear it so
+      // the auth library doesn't treat the JSON blob as a filename.
+      if (key === "GOOGLE_APPLICATION_CREDENTIALS") delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      return JSON.parse(value);
+    }
+    // A path supplied via the _JSON var — read it; a path in
+    // GOOGLE_APPLICATION_CREDENTIALS is handled by ADC, so skip it here.
+    if (key === "GOOGLE_APPLICATION_CREDENTIALS_JSON") {
+      return JSON.parse(fs.readFileSync(value, "utf8"));
+    }
+  }
+  return undefined;
 }
 
 const OCR_PROCESSOR_TYPE = "OCR_PROCESSOR";
