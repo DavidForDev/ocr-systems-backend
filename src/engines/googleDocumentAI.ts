@@ -46,9 +46,15 @@ class GoogleDocumentAIEngine extends OCREngine {
   private _processorName!: string;
 
   protected async _lazyInit() {
+    // Trim every env value — copy/paste into hosting dashboards (e.g. Railway)
+    // often leaves a trailing space or newline, which makes the processor name
+    // invalid and yields "INVALID_ARGUMENT" from Document AI.
+    const env = (k: string): string | undefined =>
+      (process.env[k] ?? "").trim() || undefined;
+
     const inlineCreds = loadInlineCredentials();
     const location =
-      process.env.GOOGLE_DOCUMENTAI_LOCATION || process.env.GOOGLE_LOCATION || "us";
+      env("GOOGLE_DOCUMENTAI_LOCATION") || env("GOOGLE_LOCATION") || "us";
 
     this._client = new DocumentProcessorServiceClient({
       // When no inline creds are given, the client authenticates via ADC
@@ -60,9 +66,9 @@ class GoogleDocumentAIEngine extends OCREngine {
 
     // Project: explicit env var, else inline creds, else resolved from ADC.
     let projectId =
-      process.env.GOOGLE_DOCUMENTAI_PROJECT_ID ||
-      process.env.GOOGLE_PROJECT_ID ||
-      (inlineCreds?.project_id as string | undefined);
+      env("GOOGLE_DOCUMENTAI_PROJECT_ID") ||
+      env("GOOGLE_PROJECT_ID") ||
+      (inlineCreds?.project_id as string | undefined)?.trim();
     if (!projectId) projectId = await this._client.getProjectId();
 
     if (!projectId) {
@@ -75,7 +81,7 @@ class GoogleDocumentAIEngine extends OCREngine {
     // Use an explicit processor if given; otherwise discover or create an OCR
     // processor in the project.
     const explicit =
-      process.env.GOOGLE_DOCUMENTAI_PROCESSOR_ID || process.env.GOOGLE_PROCESSOR_ID;
+      env("GOOGLE_DOCUMENTAI_PROCESSOR_ID") || env("GOOGLE_PROCESSOR_ID");
     this._processorName = explicit
       ? `projects/${projectId}/locations/${location}/processors/${explicit}`
       : await this._resolveOcrProcessor(projectId, location);
