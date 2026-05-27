@@ -1,7 +1,25 @@
+import fs from "node:fs";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { OCREngine, OCRResult } from "./base.js";
 
 const PRICING = { perPage: 1.5 / 1000 };
+
+/**
+ * Resolve a Google service-account credential from any of the supported env
+ * vars. Accepts either inline JSON or a path to a JSON key file. The same
+ * service account used for Vertex AI works here, provided it has Document AI
+ * access (roles/documentai.apiUser). Returns undefined to fall back to ADC.
+ */
+function loadGoogleCredentials(): Record<string, unknown> | undefined {
+  const raw =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ||
+    process.env.GOOGLE_VERTEX_CREDENTIALS;
+  if (!raw || !raw.trim()) return undefined;
+
+  const value = raw.trim();
+  const json = value.startsWith("{") ? value : fs.readFileSync(value, "utf8");
+  return JSON.parse(json);
+}
 
 class GoogleDocumentAIEngine extends OCREngine {
   id = "google-document-ai";
@@ -21,9 +39,7 @@ class GoogleDocumentAIEngine extends OCREngine {
       throw new Error("GOOGLE_PROJECT_ID and GOOGLE_PROCESSOR_ID environment variables are required");
     }
 
-    const credentials = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
-      ? JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
-      : undefined;
+    const credentials = loadGoogleCredentials();
 
     this._client = credentials
       ? new DocumentProcessorServiceClient({ credentials })
