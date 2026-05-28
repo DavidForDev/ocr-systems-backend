@@ -207,8 +207,11 @@ function matchField(
   expected: string[],
   requireAll: boolean
 ): boolean {
+  // No expected values means "this field shouldn't appear in the document" —
+  // the model passes only if it extracted nothing.
+  const effective = expected.length ? expected : [""];
   const a = normalize(actual);
-  const values = expected.map(normalize);
+  const values = effective.map(normalize);
   const test = (v: string) => (v === "" ? a === "" : a.includes(v));
   return requireAll ? values.every(test) : values.some(test);
 }
