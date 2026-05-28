@@ -7,6 +7,7 @@ import { ObjectId, Db } from "mongodb";
 import { getDB } from "../db.js";
 import { getEngine } from "../engines/index.js";
 import { extractFields, ExtractField } from "../utils/schemaExtractor.js";
+import { UPLOADS_DIR } from "./ocr.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED_DIR = path.resolve(__dirname, "../../seed");
@@ -177,10 +178,19 @@ async function loadDataset(db: Db, id: string) {
 }
 
 async function loadImageBytes(image_url: string): Promise<Buffer> {
-  // image_url like /seed/insurance-medical/images/1.jpeg
-  const rel = image_url.replace(/^\/seed\//, "");
-  const filePath = path.join(SEED_DIR, rel);
-  const raw = await fs.readFile(filePath);
+  if (!image_url) throw new Error("Item has no image_url");
+
+  // Map the public URL back to a filesystem path.
+  let absSrc: string;
+  if (image_url.startsWith("/seed/")) {
+    absSrc = path.join(SEED_DIR, image_url.slice("/seed/".length));
+  } else if (image_url.startsWith("/uploads/")) {
+    absSrc = path.join(UPLOADS_DIR, image_url.slice("/uploads/".length));
+  } else {
+    throw new Error(`Unsupported image_url: ${image_url}`);
+  }
+
+  const raw = await fs.readFile(absSrc);
   // Normalize to a sensible PNG to avoid engine-specific format quirks.
   return sharp(raw)
     .resize(4000, 4000, { fit: "inside", withoutEnlargement: true })
