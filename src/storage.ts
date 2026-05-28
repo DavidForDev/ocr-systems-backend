@@ -43,6 +43,15 @@ const r2 =
 
 export const storageMode: "r2" | "local" = r2 ? "r2" : "local";
 
+// If the user *tried* to configure R2 but missed something, say which keys are
+// missing — silent fallback to local is exactly the bug they reported.
+const r2Vars = { R2_ACCOUNT_ID: accountId, R2_BUCKET: bucket, R2_ACCESS_KEY_ID: accessKeyId, R2_SECRET_ACCESS_KEY: secretAccessKey, R2_PUBLIC_BASE_URL: publicBase };
+const anyR2Set = Object.values(r2Vars).some((v) => !!v);
+if (!r2 && anyR2Set) {
+  const missing = Object.entries(r2Vars).filter(([, v]) => !v).map(([k]) => k);
+  console.warn(`[storage] R2 partially configured — falling back to LOCAL. Missing: ${missing.join(", ")}`);
+}
+
 /** Upload a buffer under `key` and return its public URL. */
 export async function putObject(
   key: string,
