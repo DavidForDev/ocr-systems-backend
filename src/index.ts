@@ -8,6 +8,7 @@ import { connectDB } from "./db.js";
 import ocrRouter from "./routes/ocr.js";
 import evalsRouter from "./routes/evals.js";
 import datasetsRouter from "./routes/datasets.js";
+import analyticsRouter from "./routes/analytics.js";
 import { seedInsuranceMedical } from "./seed/insuranceMedical.js";
 import { LOCAL_UPLOADS_DIR, storageMode } from "./storage.js";
 
@@ -38,6 +39,7 @@ if (storageMode === "local") {
 app.use("/api", ocrRouter);
 app.use("/api", evalsRouter);
 app.use("/api", datasetsRouter);
+app.use("/api", analyticsRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", storage: storageMode });

@@ -154,6 +154,13 @@ interface ItemResult {
   ocr_seconds: number;
   ocr_confidence: number | null;
   error: string | null;
+  // Engine-side cost/usage carried over from result.metadata so analytics can
+  // compute $/correct-field across many runs.
+  cost_usd: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  pages_processed: number | null;
   extracted: Record<string, string | null>;
   checks: { field: string; expected: string[]; actual: string; match: boolean }[];
   correct: number;
@@ -268,6 +275,7 @@ async function runEvalInBackground(
               };
             });
             const correct = checks.filter((c) => c.match).length;
+            const meta = r.metadata || {};
             return {
               item_id: item.id,
               item_name: item.name,
@@ -275,6 +283,11 @@ async function runEvalInBackground(
               ocr_seconds: typeof r.processing_time === "number" ? r.processing_time : 0,
               ocr_confidence: r.confidence ?? null,
               error: r.error ?? null,
+              cost_usd: (meta.cost_usd as number | undefined) ?? null,
+              input_tokens: (meta.input_tokens as number | undefined) ?? null,
+              output_tokens: (meta.output_tokens as number | undefined) ?? null,
+              total_tokens: (meta.total_tokens as number | undefined) ?? null,
+              pages_processed: (meta.pages_processed as number | undefined) ?? null,
               extracted,
               checks,
               correct,
@@ -290,6 +303,11 @@ async function runEvalInBackground(
               ocr_seconds: 0,
               ocr_confidence: null,
               error: e?.message ?? String(e),
+              cost_usd: null,
+              input_tokens: null,
+              output_tokens: null,
+              total_tokens: null,
+              pages_processed: null,
               extracted: {},
               checks: [],
               correct: 0,
