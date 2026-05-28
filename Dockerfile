@@ -7,6 +7,9 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
+# Built-in datasets (images + metadata) shipped to the container so the seeder
+# can populate the datasets collection on first boot.
+COPY seed ./seed
 
 RUN npx -p typescript tsc
 RUN npm prune --omit=dev
