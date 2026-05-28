@@ -1,20 +1,14 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import sharp from "sharp";
-import path from "node:path";
-import fs from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { ObjectId } from "mongodb";
 import { engines, getEngine, getAllEngines } from "../engines/index.js";
 import { getDB } from "../db.js";
 import { extractFields } from "../utils/schemaExtractor.js";
+import { deleteByUrl, putObject } from "../storage.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
-
-// uploads/ lives at the backend root (../../uploads from src/routes).
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const UPLOADS_DIR = path.resolve(__dirname, "../../uploads");
 
 async function prepareImage(buffer: Buffer): Promise<Buffer> {
   return sharp(buffer)
@@ -24,37 +18,29 @@ async function prepareImage(buffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Persist the run's image to disk so history can show which image was used.
- * Stores a full-size PNG and a small WebP thumbnail; returns their public URLs.
+ * Persist the run's image so history can show which image was used.
+ * Stores a full-size PNG and a small WebP thumbnail via the storage adapter
+ * (R2 in production, local disk in dev). Returns the public URLs.
  */
 async function saveRunImage(
   id: string,
   fullBuffer: Buffer
 ): Promise<{ image_url: string; thumb_url: string }> {
-  await fs.mkdir(UPLOADS_DIR, { recursive: true });
-  const fullName = `${id}.png`;
-  const thumbName = `${id}_thumb.webp`;
-
   const thumb = await sharp(fullBuffer)
     .resize(320, 320, { fit: "inside", withoutEnlargement: true })
     .webp({ quality: 70 })
     .toBuffer();
 
-  await Promise.all([
-    fs.writeFile(path.join(UPLOADS_DIR, fullName), fullBuffer),
-    fs.writeFile(path.join(UPLOADS_DIR, thumbName), thumb),
+  const [image_url, thumb_url] = await Promise.all([
+    putObject(`runs/${id}.png`, fullBuffer, "image/png"),
+    putObject(`runs/${id}_thumb.webp`, thumb, "image/webp"),
   ]);
 
-  return { image_url: `/uploads/${fullName}`, thumb_url: `/uploads/${thumbName}` };
+  return { image_url, thumb_url };
 }
 
 async function deleteRunImage(run: { image_url?: string | null; thumb_url?: string | null }) {
-  const names = [run.image_url, run.thumb_url]
-    .filter((u): u is string => !!u)
-    .map((u) => path.basename(u));
-  await Promise.all(
-    names.map((n) => fs.rm(path.join(UPLOADS_DIR, n), { force: true }))
-  );
+  await Promise.all([deleteByUrl(run.image_url), deleteByUrl(run.thumb_url)]);
 }
 
 router.get("/engines", (_req: Request, res: Response) => {

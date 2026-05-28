@@ -1,16 +1,10 @@
 import { Router, Request, Response } from "express";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { ObjectId, Db } from "mongodb";
 import { getDB } from "../db.js";
 import { getEngine } from "../engines/index.js";
 import { extractFields, ExtractField } from "../utils/schemaExtractor.js";
-import { UPLOADS_DIR } from "./ocr.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SEED_DIR = path.resolve(__dirname, "../../seed");
+import { getBytesFromUrl } from "../storage.js";
 
 const router = Router();
 const BATCH_SIZE = 3;
@@ -179,18 +173,7 @@ async function loadDataset(db: Db, id: string) {
 
 async function loadImageBytes(image_url: string): Promise<Buffer> {
   if (!image_url) throw new Error("Item has no image_url");
-
-  // Map the public URL back to a filesystem path.
-  let absSrc: string;
-  if (image_url.startsWith("/seed/")) {
-    absSrc = path.join(SEED_DIR, image_url.slice("/seed/".length));
-  } else if (image_url.startsWith("/uploads/")) {
-    absSrc = path.join(UPLOADS_DIR, image_url.slice("/uploads/".length));
-  } else {
-    throw new Error(`Unsupported image_url: ${image_url}`);
-  }
-
-  const raw = await fs.readFile(absSrc);
+  const raw = await getBytesFromUrl(image_url);
   // Normalize to a sensible PNG to avoid engine-specific format quirks.
   return sharp(raw)
     .resize(4000, 4000, { fit: "inside", withoutEnlargement: true })

@@ -2,19 +2,15 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import sharp from "sharp";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { ObjectId, Db } from "mongodb";
 import { getDB } from "../db.js";
-import { UPLOADS_DIR } from "./ocr.js";
+import { copyByUrl, deleteByUrl, putObject } from "../storage.js";
 
 const router = Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
 });
-
-const DATASETS_DIR = path.join(UPLOADS_DIR, "datasets");
 
 interface FieldSchemaItem {
   name: string;
@@ -34,26 +30,6 @@ interface DatasetBody {
   description?: string;
   field_schema: FieldSchemaItem[];
   items?: DatasetItem[];
-}
-
-/** ── Helpers ─────────────────────────────────────────────────── */
-
-async function ensureDatasetDir(id: string): Promise<string> {
-  const dir = path.join(DATASETS_DIR, id);
-  await fs.mkdir(dir, { recursive: true });
-  return dir;
-}
-
-async function removeDatasetDir(id: string) {
-  await fs.rm(path.join(DATASETS_DIR, id), { recursive: true, force: true });
-}
-
-async function removeFileFromUrl(u: string | undefined | null) {
-  if (!u) return;
-  // Only touch files under /uploads/...
-  if (!u.startsWith("/uploads/")) return;
-  const rel = u.replace(/^\/uploads\//, "");
-  await fs.rm(path.join(UPLOADS_DIR, rel), { force: true });
 }
 
 function validateBody(body: any): { ok: true; body: DatasetBody } | { ok: false; error: string } {
@@ -128,7 +104,7 @@ router.put("/datasets/:id", async (req: Request, res: Response) => {
     const oldItems: DatasetItem[] = existing.items ?? [];
     const newItemIds = new Set(v.body.items?.map((i) => i.id));
     const removed = oldItems.filter((i) => !newItemIds.has(i.id));
-    await Promise.all(removed.flatMap((i) => [removeFileFromUrl(i.image_url), removeFileFromUrl(i.thumb_url)]));
+    await Promise.all(removed.flatMap((i) => [deleteByUrl(i.image_url), deleteByUrl(i.thumb_url)]));
 
     await db.collection("datasets").updateOne(
       { _id: existing._id },
@@ -157,7 +133,8 @@ router.delete("/datasets/:id", async (req: Request, res: Response) => {
     if (existing.builtin) return void res.status(403).json({ error: "Builtin dataset is read-only" });
 
     await db.collection("datasets").deleteOne({ _id: existing._id });
-    await removeDatasetDir(existing._id.toString()).catch(() => {});
+    const items: DatasetItem[] = existing.items ?? [];
+    await Promise.all(items.flatMap((i) => [deleteByUrl(i.image_url), deleteByUrl(i.thumb_url)]));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -172,38 +149,18 @@ router.post("/datasets/:id/clone", async (req: Request, res: Response) => {
     if (!src) return void res.status(404).json({ error: "Not found" });
 
     const newId = new ObjectId();
-    const newDir = await ensureDatasetDir(newId.toString());
+    const newIdStr = newId.toString();
 
-    // Copy images for each item (best-effort).
+    // Copy each item's images via the storage adapter (R2 CopyObject when both
+    // sides are in R2, otherwise fetch + re-upload).
     const items: DatasetItem[] = await Promise.all(
       ((src.items ?? []) as DatasetItem[]).map(async (item) => {
-        const copyUrl = async (u: string | undefined | null): Promise<string | undefined> => {
-          if (!u) return undefined;
-          // Source can be /seed/... (builtin) or /uploads/datasets/<srcId>/...
-          let absSrc: string | null = null;
-          if (u.startsWith("/seed/")) {
-            // Look up real seed root (sibling of dist), same as index.ts.
-            const seedRoot = path.resolve(UPLOADS_DIR, "..", "seed");
-            absSrc = path.join(seedRoot, u.replace(/^\/seed\//, ""));
-          } else if (u.startsWith("/uploads/")) {
-            absSrc = path.join(UPLOADS_DIR, u.replace(/^\/uploads\//, ""));
-          }
-          if (!absSrc) return undefined;
-          const ext = path.extname(absSrc) || ".png";
-          const destName = `${randomUUID()}${ext}`;
-          const absDest = path.join(newDir, destName);
-          try {
-            await fs.copyFile(absSrc, absDest);
-          } catch {
-            return undefined;
-          }
-          return `/uploads/datasets/${newId.toString()}/${destName}`;
-        };
-        const image_url = await copyUrl(item.image_url);
-        const thumb_url = await copyUrl(item.thumb_url);
+        const uuid = randomUUID();
+        const image_url = await copyByUrl(item.image_url, `datasets/${newIdStr}/${uuid}.png`);
+        const thumb_url = await copyByUrl(item.thumb_url, `datasets/${newIdStr}/${uuid}_thumb.webp`);
         return {
           ...item,
-          id: randomUUID(),
+          id: uuid,
           image_url: image_url ?? "",
           thumb_url: thumb_url ?? undefined,
         };
@@ -246,7 +203,6 @@ router.post(
       if (ds.builtin) return void res.status(403).json({ error: "Builtin dataset is read-only" });
 
       const id = req.params.id;
-      const dir = await ensureDatasetDir(id);
       const uuid = randomUUID();
       const full = await sharp(req.file.buffer)
         .resize(4000, 4000, { fit: "inside", withoutEnlargement: true })
@@ -257,14 +213,14 @@ router.post(
         .webp({ quality: 70 })
         .toBuffer();
 
-      await Promise.all([
-        fs.writeFile(path.join(dir, `${uuid}.png`), full),
-        fs.writeFile(path.join(dir, `${uuid}_thumb.webp`), thumb),
+      const [image_url, thumb_url] = await Promise.all([
+        putObject(`datasets/${id}/${uuid}.png`, full, "image/png"),
+        putObject(`datasets/${id}/${uuid}_thumb.webp`, thumb, "image/webp"),
       ]);
 
       res.json({
-        image_url: `/uploads/datasets/${id}/${uuid}.png`,
-        thumb_url: `/uploads/datasets/${id}/${uuid}_thumb.webp`,
+        image_url,
+        thumb_url,
         original_name: req.file.originalname,
       });
     } catch (e: any) {
