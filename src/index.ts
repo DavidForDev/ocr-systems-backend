@@ -8,6 +8,7 @@ import { connectDB } from "./db.js";
 import ocrRouter from "./routes/ocr.js";
 import { UPLOADS_DIR } from "./routes/ocr.js";
 import evalsRouter from "./routes/evals.js";
+import datasetsRouter from "./routes/datasets.js";
 import { seedInsuranceMedical } from "./seed/insuranceMedical.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,7 @@ app.use("/seed", express.static(SEED_DIR, { maxAge: "7d", immutable: true }));
 
 app.use("/api", ocrRouter);
 app.use("/api", evalsRouter);
+app.use("/api", datasetsRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
