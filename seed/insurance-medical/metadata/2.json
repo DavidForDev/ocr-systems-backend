@@ -1,0 +1,68 @@
+{
+  "image": "2.jpg",
+  "fields": [
+    {
+      "name": "name",
+      "value": ["არჩილ"]
+    },
+    {
+      "name": "surname",
+      "value": ["შარაშენიძე"]
+    },
+    {
+      "name": "nationalId",
+      "value": ["01017046056"]
+    },
+    {
+      "name": "birthDate",
+      "value": ["08.03.1998"],
+      "description": "date of birth in DD.MM.YYYY format. e.g 10.01.2025"
+    },
+    {
+      "name": "ambulatoryCardNumber",
+      "value": ["pc_32944", "32944"],
+      "description": "ამბულატორიული ბარათის ნომერი"
+    },
+    {
+      "name": "inpatientCardNumber",
+      "value": ["visit_168963", "168963"],
+      "description": "სტაციონალური ბარათის ნომერი"
+    },
+    {
+      "name": "documentCreationDate",
+      "value": ["16.01.2025"],
+      "description": "date of document creation in DD.MM.YYYY format. e.g 10.01.2025"
+    },
+    {
+      "name": "doctorVisitDate",
+      "value": ["16.01.2025"],
+      "description": "date of doctor visit in DD.MM.YYYY format. e.g 10.01.2025"
+    },
+    {
+      "name": "shortAnamnesis",
+      "value": [
+        "აწუხებს ოფლიანობა ხელის და ფეხის გულზე. ტერფის თითებს შორის აღენიშნება მსუბუქი აქერცვლა."
+      ],
+      "description": "მოკლე ანამნეზი"
+    },
+    {
+      "name": "pastDiseases",
+      "value": [""],
+      "description": "გადატანილი დაავადებები"
+    },
+    {
+      "name": "healthConclusion",
+      "value": [
+        "ტერფის ლიქენი",
+        "ოფლის ეკრინული ჯირკვლების სეკრეციის სხვა დარღვევები"
+      ],
+      "requireAllValues": true,
+      "description": "დასკვნა ჯანმრთელობის შესახებ"
+    },
+    {
+      "name": "clinicName",
+      "value": ["კანი", "kani"],
+      "description": "კლინიკის დასახელება"
+    }
+  ]
+}

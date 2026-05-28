@@ -84,7 +84,10 @@ router.post("/ocr", upload.single("file"), async (req: Request, res: Response) =
 
     if (fieldsRaw && result.text) {
       const fields = JSON.parse(fieldsRaw);
-      result.fields = await extractFields(result.text, fields);
+      const descriptions = req.body.field_descriptions
+        ? JSON.parse(req.body.field_descriptions)
+        : undefined;
+      result.fields = await extractFields(result.text, fields, descriptions);
     }
 
     res.json(result);
@@ -102,6 +105,9 @@ router.post("/ocr/compare", upload.single("file"), async (req: Request, res: Res
 
     const prompt = req.body.prompt || undefined;
     const fieldsRaw = req.body.fields;
+    const fieldDescriptions = req.body.field_descriptions
+      ? JSON.parse(req.body.field_descriptions)
+      : undefined;
     const engineIdsRaw = req.body.engine_ids;
 
     let selectedEngines = getAllEngines();
@@ -125,7 +131,7 @@ router.post("/ocr/compare", upload.single("file"), async (req: Request, res: Res
       selectedEngines.map(async (engine) => {
         const result = await engine.recognize(imageBuffer, prompt);
         if (fieldList && fieldList.length > 0 && result.text) {
-          result.fields = await extractFields(result.text, fieldList);
+          result.fields = await extractFields(result.text, fieldList, fieldDescriptions);
         }
         return result;
       })
@@ -151,6 +157,7 @@ router.post("/ocr/compare", upload.single("file"), async (req: Request, res: Res
         engine_ids: selectedEngines.map((e) => e.id),
         prompt: prompt || null,
         fields: fieldList,
+        field_descriptions: fieldDescriptions || null,
         results,
         image_url: imageUrls.image_url,
         thumb_url: imageUrls.thumb_url,
