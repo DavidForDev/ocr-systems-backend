@@ -13,6 +13,9 @@ export interface ExtractFromTextResult {
   fields: Record<string, string | null>;
   input_tokens: number;
   output_tokens: number;
+  /** Non-null when the call failed. Lets the caller surface the failure as
+   *  an engine error instead of silently emitting blank fields. */
+  error: string | null;
 }
 
 export async function extractFromText(
@@ -23,10 +26,12 @@ export async function extractFromText(
     fields: emptyFields(schema),
     input_tokens: 0,
     output_tokens: 0,
+    error: null,
   };
-  if (!schema.length || !text.trim()) return empty;
+  if (!schema.length) return empty;
+  if (!text.trim()) return { ...empty, error: "OCR returned no text" };
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return empty;
+  if (!apiKey) return { ...empty, error: "GEMINI_API_KEY is not configured" };
 
   const properties: Record<string, { type: SchemaType; description?: string }> = {};
   for (const f of schema) {
@@ -70,8 +75,12 @@ export async function extractFromText(
       fields,
       input_tokens: usage.promptTokenCount ?? 0,
       output_tokens: usage.candidatesTokenCount ?? 0,
+      error: null,
     };
-  } catch {
-    return empty;
+  } catch (e: any) {
+    return {
+      ...empty,
+      error: e?.message ?? "Gemini extraction failed",
+    };
   }
 }

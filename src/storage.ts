@@ -47,18 +47,46 @@ export async function putObject(key: string, body: Buffer, contentType: string):
   return `${r2.publicBase}/${key}`;
 }
 
+/** Reject anything that, once normalised, escapes its parent directory or
+ *  contains absolute paths / traversal segments. Storage URLs are always
+ *  server-generated UUID paths, so any escape attempt is a bug or attack. */
+function safeKey(raw: string): string | null {
+  const trimmed = raw.replace(/^\/+/, "");
+  if (!trimmed) return null;
+  const normalised = path.posix.normalize(trimmed);
+  if (
+    normalised.startsWith("..") ||
+    normalised.includes("/../") ||
+    normalised.endsWith("/..") ||
+    path.isAbsolute(normalised)
+  ) {
+    return null;
+  }
+  return normalised;
+}
+
 export function keyFromUrl(url: string | undefined | null): string | null {
   if (!url) return null;
-  if (r2 && url.startsWith(r2.publicBase + "/")) return decodeURIComponent(url.slice(r2.publicBase.length + 1));
-  if (url.startsWith("/uploads/")) return url.slice("/uploads/".length);
-  return null;
+  let raw: string | null = null;
+  if (r2 && url.startsWith(r2.publicBase + "/")) {
+    raw = decodeURIComponent(url.slice(r2.publicBase.length + 1));
+  } else if (url.startsWith("/uploads/")) {
+    raw = decodeURIComponent(url.slice("/uploads/".length));
+  }
+  return raw == null ? null : safeKey(raw);
 }
 
 export async function deleteByUrl(url: string | undefined | null): Promise<void> {
   const key = keyFromUrl(url);
   if (!key) return;
   if (!r2) {
-    await fs.rm(path.join(LOCAL_UPLOADS_DIR, key), { force: true });
+    const target = path.resolve(LOCAL_UPLOADS_DIR, key);
+    // Defence-in-depth: even after safeKey, refuse to act outside LOCAL_UPLOADS_DIR.
+    if (!target.startsWith(LOCAL_UPLOADS_DIR + path.sep) && target !== LOCAL_UPLOADS_DIR) {
+      console.warn(`[storage] refused delete outside uploads dir: ${target}`);
+      return;
+    }
+    await fs.rm(target, { force: true });
     return;
   }
   try {
@@ -76,7 +104,13 @@ export async function getBytesFromUrl(url: string): Promise<Buffer> {
     return Buffer.from(await r.arrayBuffer());
   }
   if (url.startsWith("/uploads/")) {
-    return fs.readFile(path.join(LOCAL_UPLOADS_DIR, url.slice("/uploads/".length)));
+    const key = safeKey(decodeURIComponent(url.slice("/uploads/".length)));
+    if (!key) throw new Error(`Refused unsafe upload path: ${url}`);
+    const target = path.resolve(LOCAL_UPLOADS_DIR, key);
+    if (!target.startsWith(LOCAL_UPLOADS_DIR + path.sep) && target !== LOCAL_UPLOADS_DIR) {
+      throw new Error(`Refused path outside uploads dir: ${url}`);
+    }
+    return fs.readFile(target);
   }
   throw new Error(`Unsupported url: ${url}`);
 }

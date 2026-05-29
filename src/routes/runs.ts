@@ -141,6 +141,10 @@ router.post("/runs/:runId/engines/:engineId/rerun", async (req: Request, res: Re
     const engineIds: string[] = Array.isArray(run.engine_ids) ? run.engine_ids : [];
     const nextEngineIds = engineIds.includes(engineId) ? engineIds : [...engineIds, engineId];
 
+    // Compute how many of this engine's results we're wiping so we can
+    // decrement `done` accordingly — otherwise the progress bar stays at 100%
+    // throughout the rerun.
+    const wipedCount = Object.keys((run.results as any)?.[engineId] ?? {}).length;
     await db.collection("runs").updateOne(
       { _id: runOid },
       {
@@ -152,6 +156,7 @@ router.post("/runs/:runId/engines/:engineId/rerun", async (req: Request, res: Re
           engine_ids: nextEngineIds,
         },
         $addToSet: { rerunning_engines: engineId } as any,
+        ...(wipedCount > 0 ? { $inc: { done: -wipedCount } } : {}),
       }
     );
 
@@ -196,17 +201,22 @@ async function runInBackground(
   schema: { name: string }[]
 ) {
   // Process per-image in parallel across engines; throttle images in small
-  // batches to keep memory + provider rate limits sane.
+  // batches to keep memory + provider rate limits sane. Cancel early if the
+  // run document disappears (e.g. dataset/run deleted) so we don't burn
+  // engine API calls on a phantom run.
   const BATCH = 3;
-  let done = 0;
+  let cancelled = false;
 
   for (let i = 0; i < images.length; i += BATCH) {
+    if (cancelled) return;
     const slice = images.slice(i, i + BATCH);
     await Promise.all(
       slice.map(async (img) => {
+        if (cancelled) return;
         const bytes = await safeBytes(img.image_url);
         await Promise.all(
           engines.map(async (eng) => {
+            if (cancelled) return;
             const result = bytes
               ? await safeExtract(eng, bytes, schema)
               : {
@@ -216,7 +226,7 @@ async function runInBackground(
                   error: "Could not load image bytes",
                   metadata: {},
                 };
-            await db.collection("runs").updateOne(
+            const upd = await db.collection("runs").updateOne(
               { _id: runId },
               {
                 $set: {
@@ -225,18 +235,20 @@ async function runInBackground(
                 $inc: { done: 1 },
               }
             );
-            done++;
+            if (upd.matchedCount === 0) {
+              cancelled = true;
+              console.warn(
+                `[run] ${runId.toString()} disappeared during processing — aborting background work`
+              );
+            }
           })
         );
       })
     );
   }
-  void done;
 
-  await db.collection("runs").updateOne(
-    { _id: runId },
-    { $set: { status: "complete", completed_at: new Date() } }
-  );
+  if (cancelled) return;
+  await finalizeIfIdle(db, runId);
 }
 
 async function rerunEngineInBackground(
@@ -247,10 +259,14 @@ async function rerunEngineInBackground(
   schema: { name: string }[]
 ) {
   const BATCH = 3;
+  let cancelled = false;
+
   for (let i = 0; i < images.length; i += BATCH) {
+    if (cancelled) return;
     const slice = images.slice(i, i + BATCH);
     await Promise.all(
       slice.map(async (img) => {
+        if (cancelled) return;
         const bytes = await safeBytes(img.image_url);
         const result = bytes
           ? await safeExtract(engine, bytes, schema)
@@ -261,13 +277,24 @@ async function rerunEngineInBackground(
               error: "Could not load image bytes",
               metadata: {},
             };
-        await db.collection("runs").updateOne(
+        const upd = await db.collection("runs").updateOne(
           { _id: runId },
-          { $set: { [`results.${engine.id}.${img.id}`]: result } }
+          {
+            $set: { [`results.${engine.id}.${img.id}`]: result },
+            $inc: { done: 1 },
+          }
         );
+        if (upd.matchedCount === 0) {
+          cancelled = true;
+          console.warn(
+            `[run] rerun on ${runId.toString()}/${engine.id} target disappeared — aborting`
+          );
+        }
       })
     );
   }
+
+  if (cancelled) return;
   await db.collection("runs").updateOne(
     { _id: runId },
     { $pull: { rerunning_engines: engine.id } as any }
@@ -275,19 +302,46 @@ async function rerunEngineInBackground(
   await finalizeIfIdle(db, runId);
 }
 
-/** If no engine is currently being re-run, flip the run back to "complete". */
+/** Determine the final run status by inspecting per-image results.
+ *  If every persisted result has an error, the whole run is considered an
+ *  error; otherwise it's complete. */
+function inferFinalStatus(run: any): "complete" | "error" {
+  const results: Record<string, Record<string, any>> = run.results ?? {};
+  const engineIds: string[] = run.engine_ids ?? [];
+  const images: any[] = run.images ?? [];
+  let total = 0;
+  let errs = 0;
+  for (const eid of engineIds) {
+    for (const img of images) {
+      const r = results[eid]?.[img.id];
+      if (!r) continue;
+      total++;
+      if (r.error) errs++;
+    }
+  }
+  return total > 0 && errs === total ? "error" : "complete";
+}
+
+/** Flip the run from "running" to its final status iff no engine is still
+ *  being re-run. Safe to call concurrently — the conditional updateOne
+ *  filter prevents a concurrent rerun from being stomped on. */
 async function finalizeIfIdle(db: Db, runId: ObjectId) {
   const fresh = await db.collection("runs").findOne({ _id: runId });
   if (!fresh) return;
   const rerunning: string[] = fresh.rerunning_engines ?? [];
-  if (rerunning.length === 0 && fresh.status === "running") {
-    await db
-      .collection("runs")
-      .updateOne(
-        { _id: runId },
-        { $set: { status: "complete", completed_at: new Date() } }
-      );
-  }
+  if (rerunning.length !== 0) return;
+  const status = inferFinalStatus(fresh);
+  await db.collection("runs").updateOne(
+    {
+      _id: runId,
+      status: "running",
+      $or: [
+        { rerunning_engines: { $exists: false } },
+        { rerunning_engines: { $size: 0 } },
+      ],
+    },
+    { $set: { status, completed_at: new Date() } }
+  );
 }
 
 async function safeBytes(url: string): Promise<Buffer | null> {

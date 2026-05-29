@@ -83,15 +83,18 @@ class GoogleDocumentAIEngine extends Engine {
         rawDocument: { content, mimeType: "image/jpeg" },
       });
 
-      // Log the entire Document AI response for inspection.
-      const dumped = JSON.stringify(
-        result,
-        (_k, v) => (v && v.type === "Buffer" ? `<Buffer ${v.data?.length ?? "?"}B>` : v),
-        2
-      );
-      console.log(
-        `[google-document-ai] processDocument response (${dumped.length} chars):\n${dumped}`
-      );
+      // Log the entire Document AI response for inspection (gated — these dumps
+      // are MBs per image and flood production logs).
+      if (process.env.DEBUG_DOCAI === "1") {
+        const dumped = JSON.stringify(
+          result,
+          (_k, v) => (v && v.type === "Buffer" ? `<Buffer ${v.data?.length ?? "?"}B>` : v),
+          2
+        );
+        console.log(
+          `[google-document-ai] processDocument response (${dumped.length} chars):\n${dumped}`
+        );
+      }
 
       const text = (result.document?.text ?? "").trim();
       const pages = result.document?.pages?.length ?? 1;
@@ -102,7 +105,9 @@ class GoogleDocumentAIEngine extends Engine {
         fields: llm.fields,
         ocr_text: text || null,
         processing_time: secsSince(start),
-        error: null,
+        // Surface a Gemini-side failure (e.g. quota, JSON parse error) so the
+        // UI can show the row as errored instead of silently empty.
+        error: llm.error,
         metadata: {
           provider: "google-document-ai",
           pages_processed: pages,

@@ -132,7 +132,9 @@ function perEngineStats(run: any) {
       if (!r) continue;
       resultCount++;
       if (r.error) errors++;
-      if (typeof r.processing_time === "number") {
+      // Only count successful samples toward avg_time. Errored calls (e.g.
+      // immediate throws) have unrepresentative processing_time.
+      if (!r.error && typeof r.processing_time === "number") {
         totalTime += r.processing_time;
         timeSamples++;
       }
@@ -173,6 +175,10 @@ function perEngineStats(run: any) {
 function latestRunSummary(run: any) {
   if (!run) return null;
   const engines = perEngineStats(run);
+  // matches/misses/evaluated are totals across all engines × images × truth
+  // fields. With N engines on M images and S truth fields, max == N*M*S — that's
+  // the *intended* meaning: total per-cell evaluations across the whole run.
+  // (Per-engine accuracy is exposed separately via per_engine[].)
   const matches = engines.reduce((a, e) => a + e.matches, 0);
   const misses = engines.reduce((a, e) => a + e.misses, 0);
   return {
@@ -279,6 +285,7 @@ router.put("/datasets/:id", async (req: Request, res: Response) => {
     }
     await db.collection("datasets").updateOne({ _id: existing._id }, { $set: update });
     const refreshed = await db.collection("datasets").findOne({ _id: existing._id });
+    if (!refreshed) return void res.status(404).json({ error: "Dataset was deleted" });
     res.json(fullView(refreshed));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -338,6 +345,7 @@ router.post(
         { $push: { images: { $each: added } } as any, $set: { updated_at: new Date() } }
       );
       const refreshed = await db.collection("datasets").findOne({ _id: existing._id });
+      if (!refreshed) return void res.status(404).json({ error: "Dataset was deleted" });
       res.json({ added, dataset: fullView(refreshed) });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
