@@ -6,6 +6,38 @@ import { getBytesFromUrl } from "../storage.js";
 
 const router = Router();
 
+/** Coerce legacy `expected_value: string` to the canonical `expected_values: string[]`
+ *  shape so clients always see one schema shape regardless of when the run was saved. */
+function normaliseRunSchema(schema: any): any[] {
+  if (!Array.isArray(schema)) return [];
+  return schema.map((f) => {
+    const out: any = { name: f?.name };
+    if (typeof f?.description === "string" && f.description.trim()) out.description = f.description.trim();
+    const values: string[] = [];
+    if (Array.isArray(f?.expected_values))
+      for (const v of f.expected_values) {
+        if (typeof v === "string" && v.trim()) values.push(v.trim());
+      }
+    if (typeof f?.expected_value === "string" && f.expected_value.trim()) values.push(f.expected_value.trim());
+    if (Array.isArray(f?.expected_value))
+      for (const v of f.expected_value) {
+        if (typeof v === "string" && v.trim()) values.push(v.trim());
+      }
+    const deduped = Array.from(new Set(values));
+    if (deduped.length) out.expected_values = deduped;
+    return out;
+  });
+}
+
+function viewRun(doc: any) {
+  return {
+    id: doc._id.toString(),
+    ...doc,
+    schema: normaliseRunSchema(doc.schema),
+    _id: undefined,
+  };
+}
+
 router.get("/engines", (_req: Request, res: Response) => {
   res.json({ engines: getAllEngines().map((e) => e.info()) });
 });
@@ -81,7 +113,7 @@ router.get("/runs/:id", async (req: Request, res: Response) => {
     try { oid = new ObjectId(req.params.id); } catch { return void res.status(400).json({ error: "Invalid id" }); }
     const doc = await db.collection("runs").findOne({ _id: oid });
     if (!doc) return void res.status(404).json({ error: "Not found" });
-    res.json({ id: doc._id.toString(), ...doc, _id: undefined });
+    res.json(viewRun(doc));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -150,7 +182,7 @@ router.get("/datasets/:id/latest-run", async (req: Request, res: Response) => {
     try { datasetId = new ObjectId(req.params.id); } catch { return void res.status(400).json({ error: "Invalid id" }); }
     const doc = await db.collection("runs").find({ dataset_id: datasetId }).sort({ created_at: -1 }).limit(1).next();
     if (!doc) return void res.json(null);
-    res.json({ id: doc._id.toString(), ...doc, _id: undefined });
+    res.json(viewRun(doc));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

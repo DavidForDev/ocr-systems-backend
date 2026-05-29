@@ -82,6 +82,17 @@ class GoogleDocumentAIEngine extends Engine {
         name: this._processorName,
         rawDocument: { content, mimeType: "image/jpeg" },
       });
+
+      // Log the entire Document AI response for inspection.
+      const dumped = JSON.stringify(
+        result,
+        (_k, v) => (v && v.type === "Buffer" ? `<Buffer ${v.data?.length ?? "?"}B>` : v),
+        2
+      );
+      console.log(
+        `[google-document-ai] processDocument response (${dumped.length} chars):\n${dumped}`
+      );
+
       const text = (result.document?.text ?? "").trim();
       const pages = result.document?.pages?.length ?? 1;
 

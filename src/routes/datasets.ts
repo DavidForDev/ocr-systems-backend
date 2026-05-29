@@ -184,6 +184,8 @@ function latestRunSummary(run: any) {
     matches,
     misses,
     evaluated: matches + misses,
+    done: run.done ?? 0,
+    total: run.total ?? 0,
     completed_at: run.completed_at,
     created_at: run.created_at,
     per_engine: engines,
